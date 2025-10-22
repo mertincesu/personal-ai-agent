@@ -6,9 +6,6 @@ Uses only 3 environment variables: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGL
 import os
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-import dotenv
-
-dotenv.load_dotenv()
 
 def get_google_credentials():
     """Get Google OAuth credentials from environment variables"""

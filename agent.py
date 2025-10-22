@@ -1,105 +1,196 @@
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.callbacks import BaseCallbackHandler
 import os
+import json
+import re
 import dotenv
+from datetime import datetime, timezone, timedelta
 
-from datetime import datetime
-current_datetime = datetime.now()
+from meta_tools import MetaTools, meta_tool_functions
+from utils import AgentUtils
 
-from tools.gmail_tools import GmailTools
-from tools.web_tools import WebTools
-from tools.docs_tools import DocsTools
-from tools.calendar_tools import CalendarTools
-from tools.contacts_tools import ContactsTools
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 dotenv.load_dotenv()
+current_date_and_time = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=4)))
 
-# Class Initializations
-gmail_tools = GmailTools()
-calendar_tools = CalendarTools()
-web_tools = WebTools()
-docs_tools = DocsTools()
-contacts_tools = ContactsTools()
+# Start with only meta-tools to save tokens
+initial_meta_functions = meta_tool_functions
+initial_tool_signatures = AgentUtils.get_function_signatures(initial_meta_functions)
 
-user_email = "mert.incesu.c@propertyfinder.ae"
-user_name = "Mert Incesu"
+def create_system_prompt(interaction_memory, available_tools):
+    memory_text = ""
+    if interaction_memory:
+        memory_text = f"""
 
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system",  "You are 'Viral', Mert Incesu's intelligent personal assistant. You are proactive, efficient, and minimize friction for Mert by automatically using available tools to complete tasks.\n\n"
-                    "CORE BEHAVIOR:\n"
-                    "- Always be proactive: When Mert mentions people, automatically search contacts to get their details\n"
-                    "- When scheduling/calendar topics come up, automatically check his calendar for context\n"
-                    "- When he asks to email someone, search contacts first, then send the email without asking for confirmation\n"
-                    "- When he mentions meetings/calls, check his calendar to find relevant events\n"
-                    "- Combine multiple tools intelligently to provide complete solutions\n"
-                    "- Only ask for clarification when absolutely necessary - try to infer and act first\n\n"
-                    "AVAILABLE TOOLS & WHEN TO USE THEM:\n"
-                    "- Contacts: Search when people are mentioned by name, relationship (dad, mom, sister), or when emailing\n"
-                    "- Calendar: Check when time/scheduling is discussed, or when confirming meeting details\n"
-                    "- Email: Send when requested, using contact info you've found\n"
-                    "- Docs: Create/edit when document work is needed\n"
-                    "- Web: Search for information not available in other tools\n\n"
-                    "SMART REASONING:\n"
-                    "- If Mert says 'email dad', immediately search contacts for 'dad' relationship, then send email\n"
-                    "- If he mentions 'tomorrow's meeting', check calendar for tomorrow's events\n"
-                    "- If he says 'remind X about Y', search contacts for X, check calendar for Y, then email\n"
-                    "- Always provide complete solutions, not partial ones\n\n"
-                    "Mert's email: mert.incesu03@gmail.com\n"
-                    f"Current date & time: {current_datetime}\n\n"
-                    "Be helpful, efficient, and minimize back-and-forth. Act first, explain after."),
-        ("placeholder", "{chat_history}"),
-        ("human", "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
-    ]
-)
+Current interaction context:
+{json.dumps(interaction_memory, indent=2)}
+"""
+    
+    return f"""
 
-model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", api_key=os.getenv("GEMINI_API_KEY"), temperature=0.7, top_p=0.9)
+You are a function calling AI model, that is the personal AI Agent of Mert. Your main purpose is to serve Mert, and do whatever he tells you.
+You must be proactive. Mert's email address is mert.incesu03@gmail.com
 
-tools = [gmail_tools.send_email, gmail_tools.list_emails, gmail_tools.search_emails, gmail_tools.read_email,  
-        web_tools.perform_web_search, docs_tools.edit_google_docs_document, docs_tools.list_google_docs_documents, docs_tools.read_google_docs_document_contents,
-        docs_tools.create_google_docs_document, calendar_tools.get_calendar_events, calendar_tools.create_calendar_event, calendar_tools.search_calendar_events, 
-        calendar_tools.update_calendar_event, calendar_tools.delete_calendar_event,
-        contacts_tools.list_all_contacts, contacts_tools.search_contacts_list, contacts_tools.edit_contact, contacts_tools.delete_contact, contacts_tools.add_contact]
-agent = create_tool_calling_agent(model, tools, prompt)
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
+You are provided with function signatures within <tools></tools> XML tags.
+You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug
+into functions. Pay special attention to the properties 'types'. You should use those types as in a Python dict.
+For each function call return a json object with function name and arguments within <tool_call></tool_call>
+XML tags as follows:
 
+<tool_call>
+{{"name": <function-name>,"arguments": <args-dict>,  "id": <monotonically-increasing-id>}}
+</tool_call>
+
+IMPORTANT: If you need to perform actions like sending emails, managing calendar, contacts, documents, or web search,
+you must first call the appropriate get_*_tools function (e.g., get_gmail_tools, get_calendar_tools) to load the specific tools you need.
+
+Today's Date and Time: {current_date_and_time}
+
+Here are the available tools:
+
+<tools>
+{available_tools}
+</tools>
+{memory_text}
+"""
+
+model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=os.environ["GEMINI_API_KEY"], temperature=0.7, top_p=0.9, verbose=False)
+
+# Conversation history
 conversation_history = []
 
-class CustomCallback(BaseCallbackHandler):
-    def on_tool_start(self, serialized, input_str, **kwargs):
-        tool_name = serialized.get("name", "Unknown Tool")
-        print(f"Calling {tool_name}...")
+# Dynamic tool management
+class ToolManager:
+    def __init__(self):
+        self.loaded_tools = {}
+        self.available_functions = list(initial_meta_functions)
+        self.available_signatures = initial_tool_signatures
     
-    def on_tool_end(self, output, **kwargs):
-        print("Tool completed")
+    def load_tools(self, tool_category):
+        """Load tools for a specific category"""
+        if tool_category not in self.loaded_tools:
+            meta_tool_map = {
+                'gmail': MetaTools.get_gmail_tools,
+                'calendar': MetaTools.get_calendar_tools,
+                'contacts': MetaTools.get_contacts_tools,
+                'docs': MetaTools.get_docs_tools,
+                'web': MetaTools.get_web_tools
+            }
+            
+            if tool_category in meta_tool_map:
+                tool_data = meta_tool_map[tool_category]()
+                self.loaded_tools[tool_category] = tool_data
+                self.available_functions.extend(tool_data['functions'])
+                self.available_signatures += "\n\n" + tool_data['signatures']
+                return f"Loaded {tool_category} tools successfully"
+            else:
+                return f"Unknown tool category: {tool_category}"
+        else:
+            return f"{tool_category} tools already loaded"
+    
+    def reset_tools(self):
+        """Reset to only meta-tools for new interaction"""
+        self.loaded_tools = {}
+        self.available_functions = list(initial_meta_functions)
+        self.available_signatures = initial_tool_signatures
 
-def main():
+tool_manager = ToolManager()
+
+def extract_tool_calls(text):
+    """Extract tool calls from XML tags"""
+    pattern = r'<tool_call>(.*?)</tool_call>'
+    matches = re.findall(pattern, text, re.DOTALL)
+    return [match.strip() for match in matches]
+
+while True:
+    user_input = input("\nYou: ")
     
+    # Reset interaction memory and tools for new user query
+    current_interaction_memory = []
+    tool_manager.reset_tools()
+    
+    # Create messages with current system prompt and conversation history
+    system_prompt = create_system_prompt(current_interaction_memory, tool_manager.available_signatures)
+    messages = [("system", system_prompt)] + conversation_history + [("human", user_input)]
+    
+    # Continue loop until agent returns non-tool response
     while True:
-        user_input = input("\nYou: ")
+        response = model.invoke(messages)
         
-        # Create callback handler
-        callback = CustomCallback()
+        # Store agent response in interaction memory
+        current_interaction_memory.append({
+            "type": "agent_response",
+            "content": response.content
+        })
         
-        agent_response = agent_executor.invoke(
-            {
-                "input": user_input,
-                "chat_history": conversation_history
-            },
-            config={"callbacks": [callback]}
-        )
-        output = agent_response["output"]
-        print(f"\nAgent: {output}")
-
-        conversation_history.append(HumanMessage(content=user_input))
-        conversation_history.append(AIMessage(content=output))
-
-if __name__ == "__main__":
-    main()
-
-
+        # Check for tool calls
+        tool_calls = extract_tool_calls(response.content)
+        
+        if not tool_calls:
+            # No tool calls, final response
+            print(f"\nAgent: {response.content}")
+            break
+        
+        # Show intermediate text before tool calls
+        text_before_tools = response.content.split('<tool_call>')[0].strip()
+        if text_before_tools:
+            print(f"\nAgent: {text_before_tools}")
+        
+        print(f"\n🔧 Found {len(tool_calls)} tool call(s)")
+        
+        # Execute all tool calls and collect results
+        tool_results = []
+        for i, tool_call in enumerate(tool_calls):
+            # Check if this is a meta-tool call to load specific tools
+            try:
+                call_data = json.loads(tool_call)
+                function_name = call_data.get('name', f'tool_call_{i+1}')
+                print(f"\nExecuting {function_name}...")
+                
+                # Handle meta-tool calls specially
+                if function_name.startswith('get_') and function_name.endswith('_tools'):
+                    tool_category = function_name.replace('get_', '').replace('_tools', '')
+                    result = tool_manager.load_tools(tool_category)
+                    print(f"🔧 {result}")
+                else:
+                    result = AgentUtils.run_tool(tool_call, tool_manager.available_functions)
+                    
+            except json.JSONDecodeError as e:
+                print(f"❌ Invalid JSON in tool call: {e}")
+                print(f"Tool call content: {tool_call[:200]}...")
+                result = f"Error: Invalid JSON format in tool call"
+                function_name = f'invalid_tool_call_{i+1}'
+            except Exception as e:
+                print(f"❌ Error executing tool: {e}")
+                result = f"Error: {str(e)}"
+                function_name = f'error_tool_call_{i+1}'
+            
+            # Store tool call and result in interaction memory
+            current_interaction_memory.append({
+                "type": "tool_call",
+                "function_name": function_name,
+                "call": tool_call,
+                "result": str(result)
+            })
+            
+            tool_results.append(f"{function_name} result: {result}")
+        
+        # Add tool results to messages and update system prompt with interaction memory
+        tool_results_text = "\n".join(tool_results)
+        messages.append(("assistant", response.content))
+        messages.append(("human", f"Tool results:\n{tool_results_text}"))
+        
+        # Update system prompt with current interaction memory and loaded tools
+        system_prompt = create_system_prompt(current_interaction_memory, tool_manager.available_signatures)
+        messages[0] = ("system", system_prompt)
     
+    # Add final exchange to conversation history
+    conversation_history.append(("human", user_input))
+    conversation_history.append(("assistant", response.content))
+    
+    # Keep conversation history manageable (last 10 exchanges)
+    if len(conversation_history) > 20:
+        conversation_history = conversation_history[-20:]
+    
+    print(f"\nInput Tokens Used: {response.usage_metadata['input_tokens']}")
+    print(f"Output Tokens Used: {response.usage_metadata['output_tokens']}")
+

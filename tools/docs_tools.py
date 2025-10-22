@@ -1,16 +1,15 @@
-from langchain.agents import tool
-from langchain_core import tools
 from auth.google_auth import get_docs_service, get_drive_service
 import os
 import dotenv
 import json
+import re
 
 dotenv.load_dotenv()
 
 class DocsTools:
     '''Tools for AI Agent regarding Google Docs Service'''
 
-    @tool
+    @staticmethod
     def create_google_docs_document(title: str, initial_content: str = "", format_as_markdown: bool = True) -> str:
         '''
         Create a new Google Docs document with optional formatted content
@@ -132,7 +131,6 @@ class DocsTools:
                             processed_line = line + '\n'
                             
                             # Handle bold text (**text**)
-                            import re
                             bold_matches = list(re.finditer(r'\*\*(.*?)\*\*', processed_line))
                             for match in reversed(bold_matches):
                                 start, end = match.span()
@@ -196,7 +194,7 @@ class DocsTools:
                 "message": f"Failed to create document: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def read_google_docs_document_contents(document_id: str) -> str:
         '''
         Read the contents of a Google Docs document
@@ -241,7 +239,7 @@ class DocsTools:
                 "message": f"Failed to read document: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def list_google_docs_documents(max_results: int = 10) -> str:
         '''
         List Google Docs documents from Google Drive
@@ -286,7 +284,7 @@ class DocsTools:
                 "message": f"Failed to list documents: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def edit_google_docs_document(document_id: str, text_to_append: str, insert_at_beginning: bool = False, format_as_markdown: bool = True) -> str:
         '''
         Edit a Google Docs document by appending or prepending formatted text
@@ -419,7 +417,6 @@ class DocsTools:
                         processed_line = line + '\n'
                         
                         # Handle bold text (**text**)
-                        import re
                         bold_matches = list(re.finditer(r'\*\*(.*?)\*\*', processed_line))
                         for match in reversed(bold_matches):  # Process in reverse to maintain indices
                             start, end = match.span()

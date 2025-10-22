@@ -1,4 +1,3 @@
-from langchain.agents import tool
 from auth.google_auth import get_calendar_service
 import json
 from datetime import datetime, timedelta
@@ -6,7 +5,7 @@ from datetime import datetime, timedelta
 class CalendarTools:
     '''Calendar tools using our 3-key auth system'''
 
-    @tool
+    @staticmethod
     def get_calendar_events(date_range: str = "today") -> str:
         '''
         Get calendar events for specified date range
@@ -95,7 +94,7 @@ class CalendarTools:
                 "message": f"Failed to get calendar events: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def create_calendar_event(summary: str, start_datetime: str, end_datetime: str, location: str = "", description: str = "", attendees: str = "") -> str:
         '''
         Create a new calendar event (Dubai timezone)
@@ -160,7 +159,7 @@ class CalendarTools:
                 "message": f"Failed to create event: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def search_calendar_events(query: str = "", start_date: str = "", end_date: str = "") -> str:
         '''
         Search calendar events
@@ -231,7 +230,7 @@ class CalendarTools:
                 "message": f"Failed to search events: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def update_calendar_event(event_id: str, summary: str = "", start_datetime: str = "", end_datetime: str = "", location: str = "", description: str = "") -> str:
         '''
         Update an existing calendar event
@@ -289,7 +288,7 @@ class CalendarTools:
                 "message": f"Failed to update event: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def delete_calendar_event(event_id: str) -> str:
         '''
         Delete a calendar event

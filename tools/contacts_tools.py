@@ -1,4 +1,3 @@
-from langchain.agents import tool
 import os
 import json
 
@@ -7,7 +6,7 @@ class ContactsTools:
     
     CONTACTS_FILE = os.path.join(os.path.dirname(__file__), 'contacts.json')
 
-    @tool
+    @staticmethod
     def search_contacts_list(query: str) -> str:
         '''Search contacts by name, email, phone, or relationship
         
@@ -50,7 +49,7 @@ class ContactsTools:
                 "message": f"Error searching contacts: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def list_all_contacts() -> str:
         '''List all contacts from the contacts.json file
         
@@ -80,7 +79,7 @@ class ContactsTools:
                 "message": f"Error reading contacts: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def add_contact(name: str, email: str = "", phone: str = "", relationship: str = "") -> str:
         '''Add a new contact to the contacts.json file
         
@@ -138,7 +137,7 @@ class ContactsTools:
                 "message": f"Error adding contact: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def delete_contact(name: str) -> str:
         '''Delete a contact from the contacts.json file
         
@@ -187,7 +186,7 @@ class ContactsTools:
                 "message": f"Error deleting contact: {str(e)}"
             })
 
-    @tool
+    @staticmethod
     def edit_contact(name: str, new_name: str = "", new_email: str = "", new_phone: str = "", new_relationship: str = "") -> str:
         '''Edit an existing contact in the contacts.json file
         
